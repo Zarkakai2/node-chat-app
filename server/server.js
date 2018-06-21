@@ -3,6 +3,8 @@ const express = require('express');
 const socketIO = require('socket.io');
 const http = require('http');
 const { generateMessage, generateLocationMessage } = require('./utils/message');
+const { isRealString } = require('./utils/validation');
+const { Users } = require('./utils/users');
 
 const app = express();
 
@@ -10,13 +12,26 @@ const publicPath = path.join(__dirname, '/../public');
 app.use(express.static(publicPath));
 const server = http.createServer(app);
 const io = socketIO(server);
+const users = new Users();
 
 io.on('connection', (socket) => {
-    console.log('New user connected');
+    socket.on('join', (params, callback) => {
+        const name = params.name;
+        const room = params.room;
+        if (!isRealString(name) || !isRealString(room)) {
+            return callback('Name and room name are required.');
+        }
 
-    socket.emit('newMessage', generateMessage('Admin', 'Welcome to the chat app'));
+        socket.join(room);
+        users.removeUser(socket.id);
+        users.addUser(socket.id, name, room);
 
-    socket.broadcast.emit('newMessage', generateMessage('Admin', 'New user joined'));
+        io.to(room).emit('updateUserList', users.getUserList(room));
+        socket.emit('newMessage', generateMessage('Admin', 'Welcome to the chat app'));
+        socket.broadcast.to(room).emit('newMessage', generateMessage('Admin', `${name} has joined`));
+        console.log(`${name} has joined the room ${room}`);
+        callback();
+    });
 
     socket.on('createMessage', (message, callback) => {
         console.log('createMessage', message);
@@ -29,7 +44,12 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        console.log('User disconnected');
+        const user = users.removeUser(socket.id);
+        if (user) {
+            io.to(user.room).emit('updateUserList', users.getUserList(user.room));
+            socket.broadcast.to(user.room).emit('newMessage', generateMessage('Admin', `${user.name} has left`));
+            console.log(`${user.name} has left the room ${user.room}`);
+        }
     });
 });
 
